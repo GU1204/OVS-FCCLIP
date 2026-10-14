@@ -26,6 +26,7 @@ from . import (
     register_pascal_ctx_459_sem_seg,
     register_coco_instance,
     register_ade20k_instance,
+    register_waterovs_instance,
     register_coco_stuff_164k,
     openseg_classes
 )

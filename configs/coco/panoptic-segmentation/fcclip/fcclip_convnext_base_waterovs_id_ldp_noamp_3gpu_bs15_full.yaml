@@ -1,0 +1,21 @@
+_BASE_: ./fcclip_convnext_base_waterovs_id.yaml
+
+MODEL:
+  WEIGHTS: ""
+  FC_CLIP:
+    LDP:
+      ENABLED: true
+      NUM_HEADS: 8
+      DROPOUT: 0.0
+
+SOLVER:
+  IMS_PER_BATCH: 15
+  MAX_ITER: 50000
+  CHECKPOINT_PERIOD: 5000
+
+TEST:
+  EVAL_PERIOD: 10000
+
+SEED: 42
+
+OUTPUT_DIR: "output/fcclip_convnext_base_waterovs_id_ldp_noamp_3gpu_bs15_full"

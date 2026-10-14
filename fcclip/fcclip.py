@@ -4,7 +4,7 @@ All Bytedance's Modifications are Copyright (year) Bytedance Ltd. and/or its aff
 
 Reference: https://github.com/facebookresearch/Mask2Former/blob/main/mask2former/maskformer_model.py
 """
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -20,6 +20,11 @@ from detectron2.utils.memory import retry_if_cuda_oom
 
 from .modeling.criterion import SetCriterion
 from .modeling.matcher import HungarianMatcher
+from .modeling.local_discriminative_pooling import (
+    LocalDiscriminativePoolingModule,
+    build_local_discriminative_pooling,
+    combine_ldp_non_void_logits,
+)
 
 
 from .modeling.transformer_decoder.fcclip_transformer_decoder import MaskPooling, get_classification_logits
@@ -72,6 +77,9 @@ class FCCLIP(nn.Module):
         geometric_ensemble_alpha: float,
         geometric_ensemble_beta: float,
         ensemble_on_valid_mask: bool,
+        local_discriminative_pooling: Optional[
+            LocalDiscriminativePoolingModule
+        ] = None,
     ):
         """
         Args:
@@ -128,6 +136,7 @@ class FCCLIP(nn.Module):
         self.geometric_ensemble_alpha = geometric_ensemble_alpha
         self.geometric_ensemble_beta = geometric_ensemble_beta
         self.ensemble_on_valid_mask = ensemble_on_valid_mask
+        self.local_discriminative_pooling = local_discriminative_pooling
 
         self.train_text_classifier = None
         self.test_text_classifier = None
@@ -259,6 +268,17 @@ class FCCLIP(nn.Module):
             importance_sample_ratio=cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO,
         )
 
+        ldp_cfg = cfg.MODEL.FC_CLIP.LDP
+        local_discriminative_pooling = None
+        if ldp_cfg.ENABLED:
+            local_discriminative_pooling = build_local_discriminative_pooling(
+                ldp_type=ldp_cfg.TYPE,
+                structure_dim=cfg.MODEL.MASK_FORMER.HIDDEN_DIM,
+                embed_dim=cfg.MODEL.FC_CLIP.EMBED_DIM,
+                num_heads=ldp_cfg.NUM_HEADS,
+                dropout=ldp_cfg.DROPOUT,
+            )
+
         return {
             "backbone": backbone,
             "sem_seg_head": sem_seg_head,
@@ -283,12 +303,61 @@ class FCCLIP(nn.Module):
             "test_topk_per_image": cfg.TEST.DETECTIONS_PER_IMAGE,
             "geometric_ensemble_alpha": cfg.MODEL.FC_CLIP.GEOMETRIC_ENSEMBLE_ALPHA,
             "geometric_ensemble_beta": cfg.MODEL.FC_CLIP.GEOMETRIC_ENSEMBLE_BETA,
-            "ensemble_on_valid_mask": cfg.MODEL.FC_CLIP.ENSEMBLE_ON_VALID_MASK
+            "ensemble_on_valid_mask": cfg.MODEL.FC_CLIP.ENSEMBLE_ON_VALID_MASK,
+            "local_discriminative_pooling": local_discriminative_pooling,
         }
 
     @property
     def device(self):
         return self.pixel_mean.device
+
+    def _project_predicted_mask_clip_features(
+        self,
+        clip_feature: torch.Tensor,
+        predicted_masks: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if clip_feature.ndim != 4:
+            raise ValueError(
+                "clip_feature must have shape [B, C, H, W], "
+                f"got {tuple(clip_feature.shape)}"
+            )
+        if predicted_masks.ndim != 4:
+            raise ValueError(
+                "predicted_masks must have shape [B, Q, H, W], "
+                f"got {tuple(predicted_masks.shape)}"
+            )
+        if clip_feature.shape[0] != predicted_masks.shape[0]:
+            raise ValueError(
+                "CLIP feature and predicted-mask batch dimensions must match, "
+                f"got {clip_feature.shape[0]} and {predicted_masks.shape[0]}"
+            )
+
+        mask_for_pooling = F.interpolate(
+            predicted_masks,
+            size=clip_feature.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        )
+        model_name = self.backbone.model_name.lower()
+        if "convnext" in model_name:
+            pooled_clip_feature = self.mask_pooling(
+                clip_feature,
+                mask_for_pooling,
+            )
+            projected_clip_feature = self.backbone.visual_prediction_forward(
+                pooled_clip_feature
+            )
+        elif "rn" in model_name:
+            projected_clip_feature = self.backbone.visual_prediction_forward(
+                clip_feature,
+                mask_for_pooling,
+            )
+        else:
+            raise NotImplementedError(
+                "Predicted-mask CLIP pooling supports ConvNeXt and ResNet backbones, "
+                f"got {self.backbone.model_name}"
+            )
+        return projected_clip_feature, mask_for_pooling
 
     def forward(self, batched_inputs):
         """
@@ -327,6 +396,35 @@ class FCCLIP(nn.Module):
         features['text_classifier'] = text_classifier
         features['num_templates'] = num_templates
         outputs = self.sem_seg_head(features)
+        region_features = outputs.pop("pred_region_features", None)
+        pooled_clip_feature = None
+        mask_for_pooling = None
+        if self.local_discriminative_pooling is not None:
+            if region_features is None:
+                raise RuntimeError(
+                    "LDP requires pred_region_features from the transformer decoder"
+                )
+            base_logits = outputs["pred_logits"]
+            pooled_clip_feature, mask_for_pooling = (
+                self._project_predicted_mask_clip_features(
+                    features["clip_vis_dense"],
+                    outputs["pred_masks"],
+                )
+            )
+            ldp_features = self.local_discriminative_pooling(
+                region_features,
+                pooled_clip_feature,
+            )
+            ldp_logits = get_classification_logits(
+                ldp_features,
+                text_classifier,
+                self.sem_seg_head.predictor.logit_scale,
+                num_templates,
+            )
+            outputs["pred_logits"] = combine_ldp_non_void_logits(
+                ldp_logits,
+                base_logits,
+            )
 
         if self.training:
             # mask classification target
@@ -352,15 +450,13 @@ class FCCLIP(nn.Module):
 
             # We ensemble the pred logits of in-vocab and out-vocab
             clip_feature = features["clip_vis_dense"]
-            mask_for_pooling = F.interpolate(mask_pred_results, size=clip_feature.shape[-2:],
-                                                mode='bilinear', align_corners=False)
-            if "convnext" in self.backbone.model_name.lower():
-                pooled_clip_feature = self.mask_pooling(clip_feature, mask_for_pooling)
-                pooled_clip_feature = self.backbone.visual_prediction_forward(pooled_clip_feature)
-            elif "rn" in self.backbone.model_name.lower():
-                pooled_clip_feature = self.backbone.visual_prediction_forward(clip_feature, mask_for_pooling)
-            else:
-                raise NotImplementedError
+            if pooled_clip_feature is None or mask_for_pooling is None:
+                pooled_clip_feature, mask_for_pooling = (
+                    self._project_predicted_mask_clip_features(
+                        clip_feature,
+                        mask_pred_results,
+                    )
+                )
 
             out_vocab_cls_results = get_classification_logits(pooled_clip_feature, text_classifier, self.backbone.clip_model.logit_scale, num_templates)
             in_vocab_cls_results = mask_cls_results[..., :-1] # remove void

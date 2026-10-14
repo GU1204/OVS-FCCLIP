@@ -1,0 +1,28 @@
+_BASE_: ./fcclip_convnext_base_waterovs_id.yaml
+
+MODEL:
+  FC_CLIP:
+    EVP_ENABLED: true
+    EVP_INPUT_TYPE: "fft"
+    EVP_PROMPT_TYPE: "highpass"
+    EVP_FREQ_RATE: 0.25
+    EVP_TUNING_STAGE: 12
+    EVP_SCALE_FACTOR: 4
+    EVP_HANDCRAFTED_TUNE: true
+    EVP_EMBEDDING_TUNE: true
+    EVP_ADAPTOR: "adaptor"
+    EVP_FUSION_TYPE: "gated_add"
+    EVP_GATE_BIAS: -2.0
+    EVP_FREQUENCY_ROUTER: "low_conditioned_gate"
+    LDP:
+      ENABLED: true
+      NUM_HEADS: 8
+      DROPOUT: 0.0
+      TYPE: paired_gated_correction
+SOLVER:
+  MAX_ITER: 50000
+
+TEST:
+  EVAL_PERIOD: 10000
+
+OUTPUT_DIR: "output/fcclip_convnext_base_waterovs_id_ldp_pgc_evp_high_low_router_stage12_gated_add_gb2_full"

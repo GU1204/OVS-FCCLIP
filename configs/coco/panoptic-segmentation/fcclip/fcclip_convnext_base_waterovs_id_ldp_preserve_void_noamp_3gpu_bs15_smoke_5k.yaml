@@ -1,0 +1,10 @@
+_BASE_: ./fcclip_convnext_base_waterovs_id_ldp_noamp_3gpu_bs15_full.yaml
+
+SOLVER:
+  MAX_ITER: 5000
+  CHECKPOINT_PERIOD: 5000
+
+TEST:
+  EVAL_PERIOD: 5000
+
+OUTPUT_DIR: "output/fcclip_convnext_base_waterovs_id_ldp_preserve_void_noamp_3gpu_bs15_smoke_5k"

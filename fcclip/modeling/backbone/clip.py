@@ -23,6 +23,8 @@ import open_clip
 
 from detectron2.modeling import BACKBONE_REGISTRY, Backbone, ShapeSpec
 
+from .evp_prompter import ConvNeXtEVPPromptGenerator
+
 @BACKBONE_REGISTRY.register()
 class CLIP(Backbone):
     def __init__(self, cfg, input_shape):
@@ -78,26 +80,48 @@ class CLIP(Backbone):
             "clip_embedding": self.dim_latent
         }
 
-        self.eval()
         self.freeze_everything()
+        self.clip_model.eval()
+
+        self.evp_prompt_generator = None
+        if getattr(cfg.MODEL.FC_CLIP, "EVP_ENABLED", False):
+            if self.model_type != "convnext":
+                raise ValueError(
+                    "MODEL.FC_CLIP.EVP_ENABLED currently supports ConvNeXt CLIP backbones only"
+                )
+            stage_depths = [
+                len(stage.blocks) for stage in self.clip_model.visual.trunk.stages
+            ]
+            self.evp_prompt_generator = ConvNeXtEVPPromptGenerator(
+                stage_channels=self.output_channels[1:],
+                stage_depths=stage_depths,
+                scale_factor=getattr(cfg.MODEL.FC_CLIP, "EVP_SCALE_FACTOR", 4),
+                tuning_stage=str(getattr(cfg.MODEL.FC_CLIP, "EVP_TUNING_STAGE", "1234")),
+                input_type=getattr(cfg.MODEL.FC_CLIP, "EVP_INPUT_TYPE", "fft"),
+                prompt_type=getattr(cfg.MODEL.FC_CLIP, "EVP_PROMPT_TYPE", "highpass"),
+                freq_rate=getattr(cfg.MODEL.FC_CLIP, "EVP_FREQ_RATE", 0.25),
+                handcrafted_tune=getattr(
+                    cfg.MODEL.FC_CLIP, "EVP_HANDCRAFTED_TUNE", True
+                ),
+                embedding_tune=getattr(
+                    cfg.MODEL.FC_CLIP, "EVP_EMBEDDING_TUNE", True
+                ),
+                adaptor=getattr(cfg.MODEL.FC_CLIP, "EVP_ADAPTOR", "adaptor"),
+                fusion_type=getattr(cfg.MODEL.FC_CLIP, "EVP_FUSION_TYPE", "add"),
+                gate_bias=getattr(cfg.MODEL.FC_CLIP, "EVP_GATE_BIAS", -2.0),
+                frequency_router=getattr(
+                    cfg.MODEL.FC_CLIP, "EVP_FREQUENCY_ROUTER", "none"
+                ),
+                pixel_mean=cfg.MODEL.PIXEL_MEAN,
+                pixel_std=cfg.MODEL.PIXEL_STD,
+            )
 
     def freeze_everything(self):
         for param in self.clip_model.parameters():
             param.requires_grad = False
 
     def encode_text(self, text, normalize: bool = False):
-        cast_dtype = self.clip_model.transformer.get_cast_dtype()
-
-        x = self.clip_model.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
-
-        x = x + self.clip_model.positional_embedding.to(cast_dtype)
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.clip_model.transformer(x, attn_mask=self.clip_model.attn_mask)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.clip_model.ln_final(x)  # [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.clip_model.text_projection
-        return F.normalize(x, dim=-1) if normalize else x
+        return self.clip_model.encode_text(text, normalize=normalize)
 
     def tokenize_text(self, text):
         return self.text_tokenizer(text)
@@ -116,10 +140,35 @@ class CLIP(Backbone):
 
     def extract_features_convnext(self, x):
         out = {}
+        handcrafted_prompts = (
+            self.evp_prompt_generator.init_handcrafted(x)
+            if self.evp_prompt_generator is not None
+            else None
+        )
         x = self.clip_model.visual.trunk.stem(x)
         out['stem'] = x.contiguous() # os4
         for i in range(4):
-            x = self.clip_model.visual.trunk.stages[i](x)
+            stage = self.clip_model.visual.trunk.stages[i]
+            if self.evp_prompt_generator is not None and self.evp_prompt_generator.stage_enabled(i):
+                x = stage.downsample(x)
+                if handcrafted_prompts is None:
+                    raise RuntimeError("EVP handcrafted prompts were not initialized")
+                prompt = self.evp_prompt_generator.init_stage_prompt(
+                    x,
+                    handcrafted_prompts[i],
+                    i,
+                )
+                for block_idx, block in enumerate(stage.blocks):
+                    x = block(
+                        self.evp_prompt_generator.add_prompt(
+                            x,
+                            prompt,
+                            i,
+                            block_idx,
+                        )
+                    )
+            else:
+                x = stage(x)
             out[f'res{i+2}'] = x.contiguous() # res 2 (os4), 3 (os8), 4 (os16), 5 (os32)
         
         x = self.clip_model.visual.trunk.norm_pre(x)
@@ -202,7 +251,7 @@ class CLIP(Backbone):
         return x
 
     def get_text_classifier(self, text_list, device):
-        self.eval()
+        self.clip_model.eval()
         with torch.no_grad():
             # reference for templates: https://github.com/mlfoundations/open_clip/blob/91f6cce16b7bee90b3b5d38ca305b5b3b67cc200/src/training/imagenet_zeroshot_data.py
             text_tokens = self.tokenize_text(text_list)
@@ -212,9 +261,11 @@ class CLIP(Backbone):
             return text_features
 
     def forward(self, x):
-        self.eval()
-        with torch.no_grad():
-            return self.extract_features(x)
+        self.clip_model.eval()
+        if self.evp_prompt_generator is None:
+            with torch.no_grad():
+                return self.extract_features(x)
+        return self.extract_features(x)
     
     @property
     def dim_latent(self):

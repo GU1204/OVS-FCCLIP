@@ -125,6 +125,24 @@ def add_fcclip_config(cfg):
     cfg.MODEL.FC_CLIP.CLIP_MODEL_NAME = "convnext_large_d_320"
     cfg.MODEL.FC_CLIP.CLIP_PRETRAINED_WEIGHTS = "laion2b_s29b_b131k_ft_soup"
     cfg.MODEL.FC_CLIP.EMBED_DIM = 768
+    cfg.MODEL.FC_CLIP.LDP = CN()
+    cfg.MODEL.FC_CLIP.LDP.ENABLED = False
+    cfg.MODEL.FC_CLIP.LDP.TYPE = "global"  # global | paired_gated_correction
+    cfg.MODEL.FC_CLIP.LDP.NUM_HEADS = 8
+    cfg.MODEL.FC_CLIP.LDP.DROPOUT = 0.0
     cfg.MODEL.FC_CLIP.GEOMETRIC_ENSEMBLE_ALPHA = 0.4
     cfg.MODEL.FC_CLIP.GEOMETRIC_ENSEMBLE_BETA = 0.8
     cfg.MODEL.FC_CLIP.ENSEMBLE_ON_VALID_MASK = False
+    cfg.MODEL.FC_CLIP.EVP_ENABLED = False
+    # identity | fft | all | gaussian | srm | degradation
+    cfg.MODEL.FC_CLIP.EVP_INPUT_TYPE = "fft"
+    cfg.MODEL.FC_CLIP.EVP_PROMPT_TYPE = "highpass"  # highpass | lowpass
+    cfg.MODEL.FC_CLIP.EVP_FREQ_RATE = 0.25
+    cfg.MODEL.FC_CLIP.EVP_TUNING_STAGE = 1234
+    cfg.MODEL.FC_CLIP.EVP_SCALE_FACTOR = 4
+    cfg.MODEL.FC_CLIP.EVP_HANDCRAFTED_TUNE = True
+    cfg.MODEL.FC_CLIP.EVP_EMBEDDING_TUNE = True
+    cfg.MODEL.FC_CLIP.EVP_ADAPTOR = "adaptor"  # adaptor | fully_shared | fully_unshared
+    cfg.MODEL.FC_CLIP.EVP_FUSION_TYPE = "add"  # add | gated_add
+    cfg.MODEL.FC_CLIP.EVP_GATE_BIAS = -2.0
+    cfg.MODEL.FC_CLIP.EVP_FREQUENCY_ROUTER = "none"  # none | low_conditioned_gate

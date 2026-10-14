@@ -1,0 +1,19 @@
+_BASE_: ./fcclip_convnext_large_waterovs_id.yaml
+MODEL:
+  FC_CLIP:
+    CLIP_MODEL_NAME: "convnext_base_w_320"
+    CLIP_PRETRAINED_WEIGHTS: "/data/gjf/code/MARIS/pretrained/CLIP-convnext_base_w_320-laion_aesthetic-s13B-b82K-augreg/open_clip_pytorch_model.bin"
+    EMBED_DIM: 640
+
+INPUT:
+  MIN_SIZE_TEST: 800
+  MAX_SIZE_TEST: 1333
+
+SOLVER:
+  MAX_ITER: 50000
+TEST:
+  EVAL_PERIOD: 10000
+  DETECTIONS_PER_IMAGE: 100
+SEED: 42
+
+OUTPUT_DIR: "output/fcclip_convnext_base_waterovs_id"
