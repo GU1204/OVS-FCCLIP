@@ -1,26 +1,35 @@
 # OVS-FCCLIP Overview
 
-最新版模型总览（v6）：上方概括整体架构，下方展开 EVP 与 PGC 核心机制。
+最新版模型总览（v7）：参考论文方法图的模块形态、数据示例与信息密度，重画整体架构及 EVP / PGC 局部机制。
 
-![OVS-FCCLIP overview v6](OVS_FCCLIP_overview_v6.png)
+![OVS-FCCLIP overview v7](OVS_FCCLIP_overview_v7.png)
 
 ## 查看与下载
 
-- [高清 PNG（5000 × 2205）](OVS_FCCLIP_overview_v6.png)
-- [矢量 PDF](OVS_FCCLIP_overview_v6.pdf)
-- [可编辑 SVG](OVS_FCCLIP_overview_v6.svg)
+- [高清 PNG（5000 × 2175）](OVS_FCCLIP_overview_v7.png)
+- [矢量 PDF](OVS_FCCLIP_overview_v7.pdf)
+- [可编辑 SVG](OVS_FCCLIP_overview_v7.svg)
 
-## 本版视觉调整
+## v7 的主要变化
 
-- 收紧上下区域的留白，统一分图编号、标题层级、模块间距和连线样式。
-- 使用低饱和蓝、金、青和淡紫区分信号类型，并以浅色底区分两个机制面板。
-- 以叠层二维网格、单行向量和多行原型矩阵分别表示空间特征、区域向量和文本原型。
-- 统一同类向量尺寸；强化 PGC 配对表中零 self-value 与结构 value 的对照，增加输出链的空间。
+- 用参考图中的鲨鱼轮廓替换通用鱼类图标，保留原图边缘的灰度。
+- 用从参考输入计算的高低频响应替换彩色棋盘格，保留它们作为图像数据的视觉形态。
+- 主干采用紧凑的窄网络模块，取消按钮式 Stage、分图徽章和结果卡片。
+- 中间变量直接使用数学符号，空间特征仅在关键位置使用薄片示意，减少重复的格子图标。
+- 使用黑色直角数据流与更清楚的算子层级；显式画出四阶段的多尺度输出、掩码池化支路及 PGC 的残差路径。
 
-图中包含整体架构、低频条件控制的 EVP 残差提示，以及配对门控校正 PGC。输入图像为示意；频域滤波遮罩、特征张量与实例掩码均为机制示意，不代表实验预测结果。
+## 图示来源与含义
 
-The overview corresponds to the PGC + high/low-frequency EVP configuration with residual injection in stages 1–2. Its implementation reference is commit `c5ff07d9beab32c627eb8ded7c4f312b7c1e4517`.
+输入图像与展示用掩码取自用户提供的参考图，均为机制示意。掩码不是 OVS-FCCLIP 的预测结果。
+
+高低频面板由参考输入的 104 × 67 RGB 裁图计算：按仓库使用的 CLIP mean / std 归一化，使用 `FREQ_RATE = 0.25` 的中心方形 FFT 滤波，逆变换后取实部绝对值，再以通道均值和逐面板线性强度缩放显示。它们是滤波响应示意，不是训练后的 prompt、feature 或 gate 激活。此示意未复现完整推理的 resize 与 batch padding。
+
+Implementation reference: `c5ff07d9beab32c627eb8ded7c4f312b7c1e4517`, using the PGC + high/low-frequency EVP configuration with residual injection in stages 1–2. The filter follows `fcclip/modeling/backbone/evp_prompter.py`.
+
+**Suggested caption note:** Input and mask examples are reproduced from the supplied reference figure. FFT responses are computed from the reference input and rescaled for visualization; they are not model predictions or learned activations.
 
 ## 上一版
+
+[v6 PNG](OVS_FCCLIP_overview_v6.png) · [v6 PDF](OVS_FCCLIP_overview_v6.pdf) · [v6 SVG](OVS_FCCLIP_overview_v6.svg)
 
 [v5 PNG](OVS_FCCLIP_overview_v5.png) · [v5 PDF](OVS_FCCLIP_overview_v5.pdf) · [v5 SVG](OVS_FCCLIP_overview_v5.svg)
