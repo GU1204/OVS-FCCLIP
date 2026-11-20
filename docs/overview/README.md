@@ -1,10 +1,19 @@
 # OVS-FCCLIP Overview
 
-最新版：v10，PNG 格式。上方按 FC-CLIP 的共享主干和原始 EVP 的注入关系重排：Stage 1–2 明确展示逐 block 的残差加法，EVP 作为独立可训练侧支，四级多尺度输出与最终 CLIP 密集特征分别连接到 decoder 和 mask pooling。
+最新版：v11，PNG 格式。在 v10 已核对的计算关系上整理连线与注释：mask 输出改为直线路径，pooling 使用同名 mask 输入端，缩短 CLIP 特征旁路，将 EVP 的阶段特征接口收回模块附近，减轻辅助线与边框的视觉重量。
 
-![OVS-FCCLIP overview v10](OVS_FCCLIP_overview_v10.png)
+![OVS-FCCLIP overview v11](OVS_FCCLIP_overview_v11.png)
 
-[查看或下载高清 PNG（6000 × 3015）](OVS_FCCLIP_overview_v10.png)
+[查看或下载高清 PNG（6000 × 3015）](OVS_FCCLIP_overview_v11.png)
+
+## v11 的布局整理
+
+- 只保留最终输出位置的一张 mask 示例，decoder 到该输出使用直线路径。
+- `M_i` 同时标在 decoder 的 mask 输出线上及 Mask Pool 上方短输入端：两处代表同一个预测 mask，用同名接口省略跨区域返回连线，pooling 的 mask 依赖保留。
+- `C_i` 的独立匹配旁路紧贴 PGC 下沿，`Y_i` 仍直接送往文本匹配。
+- EVP 的 `F_{s,0}, F_{s,b}` 接口移至两条 residual 注入线之间；Stage 1–2 的加法位置与重复次数保留。
+- 多尺度特征的四个来源保留为细线 taps，仅在进入 decoder 的出口显示箭头。主干标题已标明 ConvNeXt，重复单元内简写为 Block。
+- 下方 EVP 和 PGC 的内部计算保持 v10 的表达；原始论文参考与接口说明见下文。
 
 ## CLIP 与 EVP 的组织参考
 
@@ -23,7 +32,7 @@
 
 - 图像只经过一套 CLIP ConvNeXt 视觉主干。Stem、原始 blocks、文本编码器与 CLIP visual projection 的权重冻结；EVP 是可训练模块。
 - Stage 1、2 的框包含 `add → ConvNeXt block`，分别重复 `n_1`、`n_2` 次：`F_{s,b+1} = Block_{s,b}(F_{s,b} + r_{s,b})`。Stage 3、4 无 EVP 注入，概括为普通 blocks。
-- EVP 的 `F_{s,0}` 是该 stage 下采样后的入口特征，用于一次性的 stage embedding；`F_{s,b}` 是当前 block 的输入特征，用于该 block 的门控。图中统一作为 Stage features 接口，具体依赖在 (b) 展开。
+- EVP 的 `F_{s,0}` 是该 stage 下采样后的入口特征，用于一次性的 stage embedding；`F_{s,b}` 是当前 block 的输入特征，用于该 block 的门控。图中以阶段特征的同名符号入口表示，具体依赖在 (b) 展开。
 - 四个 stage 的输出 `F_1…F_4` 对应实现中的 `res2…res5`，汇为多尺度特征供 decoder 使用；`F_CLIP` 是最后一级经 `norm_pre` 后的 `clip_vis_dense`，供预测 masks 的 pooling 使用。
 - 总览省略 stage 下采样、`norm_pre` 和 ConvNeXt block 内部卷积细节；`n_s` 只表示该 stage 的 block 数量，不表示重复执行下采样。
 - 冻结标记表示参数不更新，不表示停止梯度，也不表示 EVP 注入后的中间特征保持不变。
@@ -60,4 +69,4 @@ Implementation reference: `c5ff07d9beab32c627eb8ded7c4f312b7c1e4517`, using the 
 
 ## 旧版 PNG
 
-[v9](OVS_FCCLIP_overview_v9.png) · [v8](OVS_FCCLIP_overview_v8.png) · [v7](OVS_FCCLIP_overview_v7.png) · [v6](OVS_FCCLIP_overview_v6.png)
+[v10](OVS_FCCLIP_overview_v10.png) · [v9](OVS_FCCLIP_overview_v9.png) · [v8](OVS_FCCLIP_overview_v8.png) · [v7](OVS_FCCLIP_overview_v7.png) · [v6](OVS_FCCLIP_overview_v6.png)
