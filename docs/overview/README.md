@@ -6,6 +6,14 @@
 
 [查看或下载高清 PNG（6000 × 3015）](OVS_FCCLIP_overview_v11.png)
 
+## v11 图中组件说明
+
+[在线阅读完整说明](OVS_FCCLIP_overview_v11_guide.md) · [下载可编辑 Word 文档](OVS_FCCLIP_overview_v11_guide.docx)
+
+文档逐项记录视觉效果、图中标注、中英文名称、抽象含义、真实计算、数据来源与去向及固定版本源码依据，覆盖 118 条组件说明、108 处文字、61 条逻辑数据依赖和 2 条参数共享注释。另含真实计算公式、张量尺寸、配置继承链及完整文字索引。
+
+重点说明大写 `C_i`、PGC 内小写 `c_i` 与最终类别标签的区别；冻结 CLIP projection 和可训练 `P_C` 的区别；EVP 低频条件与 PGC 零 self-value；以及最终 `p_i` 所包含的实例后处理。文档以 `3190e4cbd00f4957534df363f2c4e5ae11e787c9` 的源码为依据，不改动 v11 PNG。
+
 ## v11 的布局整理
 
 - 只保留最终输出位置的一张 mask 示例，decoder 到该输出使用直线路径。
@@ -70,3 +78,4 @@ Implementation reference: `c5ff07d9beab32c627eb8ded7c4f312b7c1e4517`, using the 
 ## 旧版 PNG
 
 [v10](OVS_FCCLIP_overview_v10.png) · [v9](OVS_FCCLIP_overview_v9.png) · [v8](OVS_FCCLIP_overview_v8.png) · [v7](OVS_FCCLIP_overview_v7.png) · [v6](OVS_FCCLIP_overview_v6.png)
+
