@@ -1,18 +1,92 @@
 # OVS-FCCLIP Overview
 
-最新版：v11，PNG 格式。在 v10 已核对的计算关系上整理连线与注释：mask 输出改为直线路径，pooling 使用同名 mask 输入端，缩短 CLIP 特征旁路，将 EVP 的阶段特征接口收回模块附近，减轻辅助线与边框的视觉重量。
+最新版：**v12**，使用语义标签与功能分组呈现模型。图中的区域表示直接标为 **CLIP region feature**、**Decoder region feature** 与 **Corrected region feature**；连续完成同一功能的实现步骤合并为模块，关键依赖仍单独保留。
 
-![OVS-FCCLIP overview v11](OVS_FCCLIP_overview_v11.png)
+![OVS-FCCLIP overview v12](OVS_FCCLIP_overview_v12.png)
 
-[查看或下载高清 PNG（6000 × 3015）](OVS_FCCLIP_overview_v11.png)
+[查看或下载高清 PNG（6000 × 3409）](OVS_FCCLIP_overview_v12.png)
 
-## v11 图中组件说明
+## v12 的命名方式
 
-[在线阅读完整说明](OVS_FCCLIP_overview_v11_guide.md) · [下载可编辑 Word 文档](OVS_FCCLIP_overview_v11_guide.docx)
+| v11 标注 | v12 标签 | 表示的内容 |
+| --- | --- | --- |
+| `F_CLIP` | Dense CLIP features | 最末级经 norm_pre 的密集视觉特征，用于预测 mask 的区域池化。 |
+| `C_i` | CLIP region feature | 对预测区域池化后，再经过冻结 CLIP visual heads 的区域语义表示。 |
+| `S_i` | Decoder region feature | 来自 decoder 的区域表示，包含池化投影与归一化查询特征。 |
+| `Y_i` | Corrected region feature | PGC 输出的区域分类表示。 |
+| PGC 内的 `c_i` | Projected CLIP anchor | 经可训练 anchor projection 后的 CLIP 表示，独立进入残差路径。 |
+| `M_i` | Predicted masks | 分割解码器产生的候选 masks。 |
+| `T` | Text prototypes | 类别文本编码后用于匹配的原型。 |
+| 最终 `c_i, p_i` | Labels & scores | 最终实例的类别与置信度，避免与 PGC 内的锚点记号重名。 |
+| `r_{s,b}` | Prompt residual | 实际注入主干 block 之前的、已经过门控的提示残差。 |
+| `ΔH_{s,b}` | Residual candidate | 高频提示与 stage embedding 融合并适配后形成的候选残差。 |
+| `ΔL_{s,b}` | Low-frequency condition | 仅用于调节 gate 的低频条件。 |
 
-文档逐项记录视觉效果、图中标注、中英文名称、抽象含义、真实计算、数据来源与去向及固定版本源码依据，覆盖 118 条组件说明、108 处文字、61 条逻辑数据依赖和 2 条参数共享注释。另含真实计算公式、张量尺寸、配置继承链及完整文字索引。
+总览使用 **region feature**，突出表示与预测区域的对应关系；投影后的 PGC 旁路才使用 **anchor**。Q、K、V 仅在注意力局部保留，用来区分 query、keys 和 values 的计算角色。
 
-重点说明大写 `C_i`、PGC 内小写 `c_i` 与最终类别标签的区别；冻结 CLIP projection 和可训练 `P_C` 的区别；EVP 低频条件与 PGC 零 self-value；以及最终 `p_i` 所包含的实例后处理。文档以 `3190e4cbd00f4957534df363f2c4e5ae11e787c9` 的源码为依据，不改动 v11 PNG。
+## v12 的功能分组
+
+### 主干与分类
+
+- Stem 与 block 内部结构收进 CLIP ConvNeXt encoder；Stage 1–2 与 Stage 3–4 分组显示。
+- 多尺度特征由编码器整体的输出接口表示，并明确标为 stages 1–4；这仍然包含四个 stage 的输出。
+- Stage 1–2 的提示与阶段特征接口分别保留。残差在每个 block 前注入，不是只在两个 stage group 的入口加一次。
+- 两路文本相似度计算与几何集成合成 **Text matching & score fusion**。原始 CLIP region feature 的独立分类旁路仍然保留，GE 仍只用于推理。
+
+### EVP
+
+| 合并后模块 | 包含的计算 |
+| --- | --- |
+| Frequency prompt encoding | 高低频滤波、逆变换、响应处理与对应层级提示编码。 |
+| Stage embedding | 从 stage 入口特征生成该 stage 复用的嵌入提示。 |
+| Prompt fusion & adaptation | 高频提示与 stage embedding 相加，再经 adaptor 生成残差候选。 |
+| Condition adaptation | 低频提示经 adaptor 形成门控条件。 |
+| Spatial residual gating | 条件门控网络、sigmoid 与残差逐元素缩放，输出 Prompt residual。 |
+
+高低频两路仍共享对应的提示编码器；固定 stage/block 下仍复用同一 adaptor，但“高频融合与适配”整框包含额外加法，不能把该整框与低频条件框解释为完全相同的算子。共享注释和内部线性层从主图中收起。
+
+### PGC
+
+| 合并后模块 | 包含的计算 |
+| --- | --- |
+| Feature projections | CLIP/structure 两路输入投影，以及 Q、K、V 的投影；另输出投影后的 CLIP anchor。 |
+| Paired attention | Query 对两个 keys 的点积、按单头维度缩放和两项 softmax。 |
+| Correction projection | 多头校正拼接及输出投影。 |
+| Add & normalize | 投影后的 anchor 与校正残差相加，再做 LayerNorm。 |
+
+**保留的专属机制：**
+
+- Query 来自 CLIP；两个 keys 来自同一区域的 CLIP 与 structure 表示。
+- Paired values 明确显示 **Self = 0** 和 **Structure value**；结构 value 从对应槽进入。零 self-value 在 value projection 之后设置，self key 仍参与注意力竞争。
+- Projected CLIP anchor 从 Feature projections 输出引出，独立进入残差路径，不乘 Self attention weight。
+- PGC 输出是区域分类特征；mask 输出绕过 PGC。
+- 计算在每个区域、每个 attention head 内进行；图中两个权重不是类别概率，也不是跨所有 masks 的注意力。
+
+## 简化范围与实现依据
+
+v12 收起了重复雪花、重复次数、stage 内部算子、FFT 过程与频率示例缩略图、频率中间量符号、单个投影矩阵、缩放和 Softmax 独立小框，以及 tensor 叠片。主图以功能粒度说明方法；图中模块合并不表示代码删除了相应步骤。
+
+源代码固定参考 `3190e4cbd00f4957534df363f2c4e5ae11e787c9`：
+
+- [CLIP backbone 与逐块提示注入](https://github.com/GU1204/OVS-FCCLIP/blob/3190e4cbd00f4957534df363f2c4e5ae11e787c9/fcclip/modeling/backbone/clip.py)
+- [EVP 提示与门控](https://github.com/GU1204/OVS-FCCLIP/blob/3190e4cbd00f4957534df363f2c4e5ae11e787c9/fcclip/modeling/backbone/evp_prompter.py)
+- [PGC](https://github.com/GU1204/OVS-FCCLIP/blob/3190e4cbd00f4957534df363f2c4e5ae11e787c9/fcclip/modeling/local_discriminative_pooling.py)
+- [分类、GE 与实例后处理](https://github.com/GU1204/OVS-FCCLIP/blob/3190e4cbd00f4957534df363f2c4e5ae11e787c9/fcclip/fcclip.py)
+
+输入图与 mask 画面沿用用户提供的参考素材，仅用于展示，不是 OVS-FCCLIP 的实测输出。v12 已移除频率响应缩略图。
+
+## v11 的详细组件说明
+
+此前的完整说明对应 **v11 的符号与布局**。其真实计算、源码解释仍可参考；v12 的标签对应关系以本文上表为准。
+
+[在线阅读 v11 组件说明](OVS_FCCLIP_overview_v11_guide.md) · [下载 v11 Word 说明](OVS_FCCLIP_overview_v11_guide.docx)
+
+## 历史 PNG
+
+[v11](OVS_FCCLIP_overview_v11.png) · [v10](OVS_FCCLIP_overview_v10.png) · [v9](OVS_FCCLIP_overview_v9.png) · [v8](OVS_FCCLIP_overview_v8.png) · [v7](OVS_FCCLIP_overview_v7.png) · [v6](OVS_FCCLIP_overview_v6.png)
+
+<details>
+<summary>展开 v11 的绘图记录与论文参考</summary>
 
 ## v11 的布局整理
 
@@ -75,7 +149,6 @@ PGC implementation: [fcclip/modeling/local_discriminative_pooling.py](../../fccl
 
 Implementation reference: `c5ff07d9beab32c627eb8ded7c4f312b7c1e4517`, using the PGC + high/low-frequency EVP configuration with residual injection in stages 1–2.
 
-## 旧版 PNG
 
-[v10](OVS_FCCLIP_overview_v10.png) · [v9](OVS_FCCLIP_overview_v9.png) · [v8](OVS_FCCLIP_overview_v8.png) · [v7](OVS_FCCLIP_overview_v7.png) · [v6](OVS_FCCLIP_overview_v6.png)
+</details>
 
